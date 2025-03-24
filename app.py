@@ -1,53 +1,71 @@
-from flask import Flask, render_template, redirect, url_for, request, flash
+from flask import Flask, render_template, redirect, url_for, request, flash 
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+import forms
+from models import db, Usuarios
+from flask_wtf.csrf import CSRFProtect
+from config import DevelopmentConfig
 
 app = Flask(__name__)
-app.secret_key = 'mi clave secretoa'
+app.config.from_object(DevelopmentConfig)
+app.secret_key = "esta es mi clave secreta"
+csrf = CSRFProtect(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-users = {
-    'admin': {'password': 'admin123', 'role': 'admin'},
-    'user1': {'password': 'user1123', 'role': 'user'},
-    'user2': {'password': 'user2123', 'role': 'user'}
-}
-
 class User(UserMixin):
-    def __init__(self, username):
-        self.id = username
-        self.role = users[username]['role']
+    def __init__(self, id, username, role):
+        self.id = id
+        self.username = username
+        self.role = role
 
-    @staticmethod
-    def get(username):
-        if username in users:
-            return User(username)
-        return None
+
 
 @login_manager.user_loader
-def load_user(username):
-    return User.get(username)
-
+def load_user(user_id):
+    user = Usuarios.query.get(int(user_id))
+    if user:
+        return User(user.id, user.username, user.rol)
+    return None
 
 @app.route('/')
 def index():
     return redirect(url_for('login'))
 
+@app.route("/registro", methods=['GET', 'POST'])
+def Registro():
+    create_form = forms.UserForm(request.form)
+
+    if request.method == 'POST' and create_form.validate():
+        user = Usuarios(
+            nombre=create_form.nombre.data,
+            username=create_form.username.data,
+            contrasenia=create_form.contrasenia.data,
+            rol=create_form.rol.data
+        )
+        db.session.add(user)
+        db.session.commit()
+        flash('Usuario registrado exitosamente', 'success')
+        return redirect(url_for('Registro'))
+
+    return render_template('registro.html', form=create_form)
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        if username in users and users[username]['password'] == password:
-            user = User.get(username)
-            login_user(user)
-            if user.role == 'admin':
+    form = forms.LoginForm()
+    if form.validate_on_submit():
+        username = form.username.data
+        password = form.password.data
+        user = Usuarios.query.filter_by(username=username, contrasenia=password).first()
+        if user:
+            login_user(User(user.id, user.username, user.rol))
+            if user.rol == 'admin':
                 return redirect(url_for('administrador'))
             else:
                 return redirect(url_for('usuario'))
         flash('Usuario o contraseña incorrectos', 'error')
-    return render_template('login.html')
+    return render_template('login.html', form=form)
 
 @app.route('/administrador')
 @login_required
@@ -70,4 +88,7 @@ def logout():
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
+    db.init_app(app)
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
